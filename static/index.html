@@ -29,6 +29,7 @@
       --ai-bubble: #2d3138;
       --tool-bg: #2a2415;
       --tool-border: #8a6d1d;
+      --log-bg: #262a31;
     }
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -110,6 +111,28 @@
   }
   .tool-card .tool-name { font-weight: 600; }
   .tool-card .tool-result { color: var(--text-muted); margin-top: 2px; }
+  /* 子 agent 的中间回复：弱化展示，明显区别于最终回复与工具结果 */
+  .agent-log-card {
+    max-width: 85%;
+    margin: 6px 0;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    background: var(--log-bg, #eef2f7);
+    border-left: 3px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    align-self: flex-start;
+    /* 子 agent 回复可能很长，限高内部滚动，避免日志墙挤占主视口 */
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .agent-log-card .log-agent {
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .agent-log-card .log-content { white-space: pre-wrap; word-break: break-word; }
   .error-card {
     max-width: 85%;
     margin: 6px 0;
@@ -216,6 +239,29 @@ function addToolCard(name, result) {
   return card;
 }
 
+// 子 agent 的中间回复以日志形式弱化展示。按（agent + 消息 id）分组，
+// 同一条 assistant 消息的多个 token 块累加进同一张日志卡。
+let currentLog = { key: null, el: null };
+function addAgentLog(agent, id, content) {
+  const key = agent + "::" + (id || "");
+  if (key !== currentLog.key) {
+    const card = document.createElement("div");
+    card.className = "agent-log-card";
+    const tag = document.createElement("div");
+    tag.className = "log-agent";
+    tag.textContent = `@${agent}`;
+    const body = document.createElement("div");
+    body.className = "log-content";
+    card.append(tag, body);
+    chatEl.appendChild(card);
+    currentLog.key = key;
+    currentLog.el = body;
+    scrollToBottom();
+  }
+  currentLog.el.textContent += content;
+  scrollToBottom();
+}
+
 function addErrorCard(text) {
   const card = document.createElement("div");
   card.className = "error-card";
@@ -286,12 +332,13 @@ async function send() {
           aiBubble.textContent = aiText;
           scrollToBottom();
         } else if (data.type === "tool") {
-          // 发生了工具调用：清掉此前的前置话，正式回复留到工具完成后的 token
-          aiText = "";
-          aiBubble.classList.add("empty");
-          aiBubble.textContent = "";
+          // 工具调用是中间进度：只加一张工具卡，不碰主回复气泡
+          //（主回复仅由最终总结写入，避免被中途工具事件覆盖）
           addToolCard(data.name, data.content);
           scrollToBottom();
+        } else if (data.type === "agent_log") {
+          // 子 agent 的中间回复，作为日志弱化展示，不进入最终回复
+          addAgentLog(data.agent, data.id, data.content);
         } else if (data.type === "done") {
           threadId = data.thread_id;
         } else if (data.type === "error") {
@@ -321,6 +368,7 @@ inputEl.addEventListener("keydown", (e) => {
 newChatBtn.addEventListener("click", () => {
   threadId = null;
   chatEl.innerHTML = "";
+  currentLog = { key: null, el: null };
   inputEl.focus();
 });
 
